@@ -53,6 +53,8 @@ var (
 	jiaJWTSigningKey *ecdsa.PublicKey
 
 	postIsuConditionTargetBaseURL string // JIAへのactivate時に登録する，ISUがconditionを送る先のURL
+
+  jiaUserIDCache map[string]bool
 )
 
 type Config struct {
@@ -198,6 +200,7 @@ func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
 }
 
 func init() {
+  jiaUserIDCache = make(map[string]bool)
 	sessionStore = sessions.NewCookieStore([]byte(getEnv("SESSION_KEY", "isucondition")))
 
 	key, err := ioutil.ReadFile(jiaJWTSigningKeyPath)
@@ -285,17 +288,21 @@ func getUserIDFromSession(c echo.Context) (string, int, error) {
 	}
 
 	jiaUserID := _jiaUserID.(string)
-	var count int
+//	var count int
 
-	err = db.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ? LIMIT 1",
-		jiaUserID)
-	if err != nil {
-		return "", http.StatusInternalServerError, fmt.Errorf("db error: %v", err)
-	}
+// 	err = db.Get(&count, "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = ? LIMIT 1",
+//		jiaUserID)
+//	if err != nil {
+//	return "", http.StatusInternalServerError, fmt.Errorf("db error: %v", err)
+//	}
 
-	if count == 0 {
-		return "", http.StatusUnauthorized, fmt.Errorf("not found: user")
-	}
+//	if count == 0 {
+//		return "", http.StatusUnauthorized, fmt.Errorf("not found: user")
+//	}
+
+  if _, ok := jiaUserIDCache[jiaUserID]; !ok {
+    return "", http.StatusUnauthorized, fmt.Errorf("not found: user")
+  }
 
 	return jiaUserID, 0, nil
 }
@@ -339,6 +346,20 @@ func postInitialize(c echo.Context) error {
 		c.Logger().Errorf("db error : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+  
+  var jiaUserIds []struct {
+    JIAUserId string `db:"jia_user_id"`
+  }
+
+  err = db.Select(&jiaUserIds, "SELECT `jia_user_id` FROM `user`")
+  if err != nil {
+    c.Logger().Errorf("db error : %v", err)
+    return c.NoContent(http.StatusInternalServerError)
+  }
+
+  for _, jiaUserId := range jiaUserIds {
+    jiaUserIDCache[jiaUserId.JIAUserId] = true
+  }
 
 	go func() {
 		if _, err := http.Get("http://localhost:9000/api/group/collect"); err != nil {
@@ -391,6 +412,8 @@ func postAuthentication(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+
+  jiaUserIDCache[jiaUserID] = true
 
 	session, err := getSession(c.Request())
 	if err != nil {
