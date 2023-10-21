@@ -26,7 +26,6 @@ import (
 	"github.com/labstack/gommon/log"
 
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/kaz/pprotein/integration/echov4"
 )
 
 const (
@@ -219,12 +218,8 @@ func main() {
 	)
 	e := echo.New()
 	e.Debug = false
-	e.Logger.SetLevel(log.ERROR)
 
-	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
-
-	echov4.EnableDebugHandler(e)
 
 	e.POST("/initialize", postInitialize)
 
@@ -256,7 +251,7 @@ func main() {
 		e.Logger.Fatalf("failed to connect db: %v", err)
 		return
 	}
-	db.SetMaxOpenConns(10)
+	db.SetMaxOpenConns(30)
 	defer db.Close()
 
 	postIsuConditionTargetBaseURL = os.Getenv("POST_ISUCONDITION_TARGET_BASE_URL")
@@ -360,12 +355,6 @@ func postInitialize(c echo.Context) error {
   for _, jiaUserId := range jiaUserIds {
     jiaUserIDCache[jiaUserId.JIAUserId] = true
   }
-
-	go func() {
-		if _, err := http.Get("http://localhost:9000/api/group/collect"); err != nil {
-			log.Printf("failed to communicate with pprotein: %v", err)
-		}
-	}()
 
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
