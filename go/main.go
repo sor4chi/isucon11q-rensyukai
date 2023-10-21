@@ -1181,6 +1181,14 @@ func getTrend(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+type IsuConditionBulk struct {
+  JIAIsuUUID string `db:"jia_isu_uuid"`
+  Timestamp time.Time `db:"timestamp"`
+  IsSitting bool `db:"is_sitting"`
+  Condition string `db:"condition"`
+  Message string `db:"message"`
+}
+
 // POST /api/condition/:jia_isu_uuid
 // ISUからのコンディションを受け取る
 func postIsuCondition(c echo.Context) error {
@@ -1221,24 +1229,55 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	for _, cond := range req {
-		timestamp := time.Unix(cond.Timestamp, 0)
+//	for _, cond := range req {
+//		timestamp := time.Unix(cond.Timestamp, 0)
+//
+//		if !isValidConditionFormat(cond.Condition) {
+//			return c.String(http.StatusBadRequest, "bad request body")
+//		}
+//
+//		_, err = tx.Exec(
+//			"INSERT INTO `isu_condition`"+
+//				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+//				"	VALUES (?, ?, ?, ?, ?)",
+//			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+//		if err != nil {
+//			c.Logger().Errorf("db error: %v", err)
+//			return c.NoContent(http.StatusInternalServerError)
+//		}
+//
+//	}
 
-		if !isValidConditionFormat(cond.Condition) {
-			return c.String(http.StatusBadRequest, "bad request body")
-		}
+  var isuConditionBulk []IsuConditionBulk
+  for _, cond := range req {
+    timestamp := time.Unix(cond.Timestamp, 0)
 
-		_, err = tx.Exec(
-			"INSERT INTO `isu_condition`"+
-				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-				"	VALUES (?, ?, ?, ?, ?)",
-			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
-		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
+    if !isValidConditionFormat(cond.Condition) {
+      return c.String(http.StatusBadRequest, "bad request body")
+    }
 
-	}
+    isuConditionBulk = append(isuConditionBulk, IsuConditionBulk{
+      JIAIsuUUID: jiaIsuUUID,
+      Timestamp: timestamp,
+      IsSitting: cond.IsSitting,
+      Condition: cond.Condition,
+      Message: cond.Message,
+    })
+  }
+
+  query := "INSERT INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`) VALUES "
+  for i, cond := range isuConditionBulk {
+    query += fmt.Sprintf("('%s', '%s', %t, '%s', '%s')", cond.JIAIsuUUID, cond.Timestamp.Format("2006-01-02 15:04:05"), cond.IsSitting, cond.Condition, cond.Message)
+    if i != len(isuConditionBulk) - 1 {
+      query += ","
+    }
+  }
+
+  _, err = tx.Exec(query)
+  if err != nil {
+    c.Logger().Errorf("db error: %v", err)
+    return c.NoContent(http.StatusInternalServerError)
+  }
 
 	err = tx.Commit()
 	if err != nil {
