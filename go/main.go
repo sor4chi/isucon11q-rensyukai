@@ -1103,8 +1103,8 @@ func calculateConditionLevel(condition string) (string, error) {
 // GET /api/trend
 // ISUの性格毎の最新のコンディション情報
 func getTrend(c echo.Context) error {
-	characterList := []Isu{}
-	err := db.Select(&characterList, "SELECT `character` FROM `isu` GROUP BY `character`")
+	isuAllList := []Isu{}
+	err := db.Select(&isuAllList, "SELECT * FROM `isu`")
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -1112,16 +1112,21 @@ func getTrend(c echo.Context) error {
 
 	res := []TrendResponse{}
 
+  characterMap := map[string][]Isu{}
+  for _, isu := range isuAllList {
+    if _, ok := characterMap[isu.Character]; !ok {
+      characterMap[isu.Character] = []Isu{}
+    }
+    characterMap[isu.Character] = append(characterMap[isu.Character], isu)
+  }
+
+  characterList := []string{}
+  for character := range characterMap {
+    characterList = append(characterList, character)
+  }
+
 	for _, character := range characterList {
-		isuList := []Isu{}
-		err = db.Select(&isuList,
-			"SELECT * FROM `isu` WHERE `character` = ?",
-			character.Character,
-		)
-		if err != nil {
-			c.Logger().Errorf("db error: %v", err)
-			return c.NoContent(http.StatusInternalServerError)
-		}
+		isuList := characterMap[character]
 
 		characterInfoIsuConditions := []*TrendCondition{}
 		characterWarningIsuConditions := []*TrendCondition{}
@@ -1171,7 +1176,7 @@ func getTrend(c echo.Context) error {
 		})
 		res = append(res,
 			TrendResponse{
-				Character: character.Character,
+				Character: character,
 				Info:      characterInfoIsuConditions,
 				Warning:   characterWarningIsuConditions,
 				Critical:  characterCriticalIsuConditions,
