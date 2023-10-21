@@ -736,6 +736,8 @@ func getIsuIcon(c echo.Context) error {
 
   iconCache.Set(key, image, time.Minute * 1)
 
+  c.Response().Header().Set("Cache-Control", "public, max-age=60")
+
 	return c.Blob(http.StatusOK, "", image)
 }
 
