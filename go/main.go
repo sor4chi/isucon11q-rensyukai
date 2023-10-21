@@ -25,8 +25,8 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/labstack/gommon/log"
 
+	"github.com/jellydator/ttlcache/v3"
 	"github.com/kaz/pprotein/integration/echov4"
-  "github.com/jellydator/ttlcache/v3"
 )
 
 const (
@@ -84,13 +84,14 @@ type GetIsuListResponse struct {
 }
 
 type IsuCondition struct {
-	ID         int       `db:"id"`
-	JIAIsuUUID string    `db:"jia_isu_uuid"`
-	Timestamp  time.Time `db:"timestamp"`
-	IsSitting  bool      `db:"is_sitting"`
-	Condition  string    `db:"condition"`
-	Message    string    `db:"message"`
-	CreatedAt  time.Time `db:"created_at"`
+	ID             int       `db:"id"`
+	JIAIsuUUID     string    `db:"jia_isu_uuid"`
+	Timestamp      time.Time `db:"timestamp"`
+	IsSitting      bool      `db:"is_sitting"`
+	Condition      string    `db:"condition"`
+	ConditionLevel string    `db:"condition_level"`
+	Message        string    `db:"message"`
+	CreatedAt      time.Time `db:"created_at"`
 }
 
 type MySQLConnectionEnv struct {
@@ -210,9 +211,9 @@ func init() {
 }
 
 func main() {
-  iconCache = ttlcache.New[string, []byte](
-    ttlcache.WithTTL[string, []byte](60 * time.Second),
-  )
+	iconCache = ttlcache.New[string, []byte](
+		ttlcache.WithTTL[string, []byte](60 * time.Second),
+	)
 	e := echo.New()
 	e.Debug = false
 	e.Logger.SetLevel(log.ERROR)
@@ -716,11 +717,11 @@ func getIsuIcon(c echo.Context) error {
 
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
-  key := "jia_user_id:" + jiaUserID + ",jia_isu_uuid:" + jiaIsuUUID
-  if ok := iconCache.Has(key); ok {
-    icon := iconCache.Get(key).Value()
-    return c.Blob(http.StatusOK, "", icon)
-  }
+	key := "jia_user_id:" + jiaUserID + ",jia_isu_uuid:" + jiaIsuUUID
+	if ok := iconCache.Has(key); ok {
+		icon := iconCache.Get(key).Value()
+		return c.Blob(http.StatusOK, "", icon)
+	}
 
 	var image []byte
 	err = db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
@@ -734,9 +735,9 @@ func getIsuIcon(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-  iconCache.Set(key, image, time.Minute * 1)
+	iconCache.Set(key, image, time.Minute*1)
 
-  c.Response().Header().Set("Cache-Control", "public, max-age=60")
+	c.Response().Header().Set("Cache-Control", "public, max-age=60")
 
 	return c.Blob(http.StatusOK, "", image)
 }
@@ -809,13 +810,13 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 	endTime := graphDate.Add(time.Hour * 24)
 
 	rows, err := tx.Queryx(
-    "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? AND ? <= `timestamp` AND `timestamp` < ? ORDER BY `timestamp` DESC", 
-      jiaIsuUUID, graphDate, endTime)
+		"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? AND ? <= `timestamp` AND `timestamp` < ? ORDER BY `timestamp` DESC",
+		jiaIsuUUID, graphDate, endTime)
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
 	}
 
-  conditions := []IsuCondition{}
+	conditions := []IsuCondition{}
 
 	for rows.Next() {
 		err = rows.StructScan(&condition)
@@ -823,11 +824,11 @@ func generateIsuGraphResponse(tx *sqlx.Tx, jiaIsuUUID string, graphDate time.Tim
 			return nil, err
 		}
 
-    conditions = append(conditions, condition)
-  }
+		conditions = append(conditions, condition)
+	}
 
-  for i := len(conditions) - 1; i >= 0; i-- {
-    condition = conditions[i]
+	for i := len(conditions) - 1; i >= 0; i-- {
+		condition = conditions[i]
 
 		truncatedConditionTime := condition.Timestamp.Truncate(time.Hour)
 		if truncatedConditionTime != startTimeInThisHour {
@@ -1044,21 +1045,27 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 	conditions := []IsuCondition{}
 	var err error
 
+	conditionLevelArray := []string{}
+	for level, _ := range conditionLevel {
+		conditionLevelArray = append(conditionLevelArray, level)
+	}
+
+	query := "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ? AND `timestamp` < ?"
+	query += " AND `condition_level` IN ("
+	for i, level := range conditionLevelArray {
+		if i != 0 {
+			query += ","
+		}
+		query += "'" + level + "'"
+	}
+	query += ")"
+
 	if startTime.IsZero() {
-		err = db.Select(&conditions,
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
-				"	AND `timestamp` < ?"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime,
-		)
+		query += " ORDER BY `timestamp` DESC LIMIT ?"
+		err = db.Select(&conditions, query, jiaIsuUUID, endTime, limit)
 	} else {
-		err = db.Select(&conditions,
-			"SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = ?"+
-				"	AND `timestamp` < ?"+
-				"	AND ? <= `timestamp`"+
-				"	ORDER BY `timestamp` DESC",
-			jiaIsuUUID, endTime, startTime,
-		)
+		query += " AND ? <= `timestamp`" + " ORDER BY `timestamp` DESC LIMIT ?"
+		err = db.Select(&conditions, query, jiaIsuUUID, endTime, startTime, limit)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("db error: %v", err)
@@ -1066,23 +1073,16 @@ func getIsuConditionsFromDB(db *sqlx.DB, jiaIsuUUID string, endTime time.Time, c
 
 	conditionsResponse := []*GetIsuConditionResponse{}
 	for _, c := range conditions {
-		cLevel, err := calculateConditionLevel(c.Condition)
-		if err != nil {
-			continue
+		data := GetIsuConditionResponse{
+			JIAIsuUUID:     c.JIAIsuUUID,
+			IsuName:        isuName,
+			Timestamp:      c.Timestamp.Unix(),
+			IsSitting:      c.IsSitting,
+			Condition:      c.Condition,
+			ConditionLevel: c.ConditionLevel,
+			Message:        c.Message,
 		}
-
-		if _, ok := conditionLevel[cLevel]; ok {
-			data := GetIsuConditionResponse{
-				JIAIsuUUID:     c.JIAIsuUUID,
-				IsuName:        isuName,
-				Timestamp:      c.Timestamp.Unix(),
-				IsSitting:      c.IsSitting,
-				Condition:      c.Condition,
-				ConditionLevel: cLevel,
-				Message:        c.Message,
-			}
-			conditionsResponse = append(conditionsResponse, &data)
-		}
+		conditionsResponse = append(conditionsResponse, &data)
 	}
 
 	if len(conditionsResponse) > limit {
@@ -1123,18 +1123,18 @@ func getTrend(c echo.Context) error {
 
 	res := []TrendResponse{}
 
-  characterMap := map[string][]Isu{}
-  for _, isu := range isuAllList {
-    if _, ok := characterMap[isu.Character]; !ok {
-      characterMap[isu.Character] = []Isu{}
-    }
-    characterMap[isu.Character] = append(characterMap[isu.Character], isu)
-  }
+	characterMap := map[string][]Isu{}
+	for _, isu := range isuAllList {
+		if _, ok := characterMap[isu.Character]; !ok {
+			characterMap[isu.Character] = []Isu{}
+		}
+		characterMap[isu.Character] = append(characterMap[isu.Character], isu)
+	}
 
-  characterList := []string{}
-  for character := range characterMap {
-    characterList = append(characterList, character)
-  }
+	characterList := []string{}
+	for character := range characterMap {
+		characterList = append(characterList, character)
+	}
 
 	for _, character := range characterList {
 		isuList := characterMap[character]
@@ -1198,11 +1198,12 @@ func getTrend(c echo.Context) error {
 }
 
 type IsuConditionBulk struct {
-  JIAIsuUUID string `db:"jia_isu_uuid"`
-  Timestamp time.Time `db:"timestamp"`
-  IsSitting bool `db:"is_sitting"`
-  Condition string `db:"condition"`
-  Message string `db:"message"`
+	JIAIsuUUID     string    `db:"jia_isu_uuid"`
+	Timestamp      time.Time `db:"timestamp"`
+	IsSitting      bool      `db:"is_sitting"`
+	Condition      string    `db:"condition"`
+	ConditionLevel string    `db:"condition_level"`
+	Message        string    `db:"message"`
 }
 
 // POST /api/condition/:jia_isu_uuid
@@ -1245,55 +1246,60 @@ func postIsuCondition(c echo.Context) error {
 	}
 	defer tx.Rollback()
 
-//	for _, cond := range req {
-//		timestamp := time.Unix(cond.Timestamp, 0)
-//
-//		if !isValidConditionFormat(cond.Condition) {
-//			return c.String(http.StatusBadRequest, "bad request body")
-//		}
-//
-//		_, err = tx.Exec(
-//			"INSERT INTO `isu_condition`"+
-//				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-//				"	VALUES (?, ?, ?, ?, ?)",
-//			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
-//		if err != nil {
-//			c.Logger().Errorf("db error: %v", err)
-//			return c.NoContent(http.StatusInternalServerError)
-//		}
-//
-//	}
+	//	for _, cond := range req {
+	//		timestamp := time.Unix(cond.Timestamp, 0)
+	//
+	//		if !isValidConditionFormat(cond.Condition) {
+	//			return c.String(http.StatusBadRequest, "bad request body")
+	//		}
+	//
+	//		_, err = tx.Exec(
+	//			"INSERT INTO `isu_condition`"+
+	//				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
+	//				"	VALUES (?, ?, ?, ?, ?)",
+	//			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
+	//		if err != nil {
+	//			c.Logger().Errorf("db error: %v", err)
+	//			return c.NoContent(http.StatusInternalServerError)
+	//		}
+	//
+	//	}
 
-  var isuConditionBulk []IsuConditionBulk
-  for _, cond := range req {
-    timestamp := time.Unix(cond.Timestamp, 0)
+	var isuConditionBulk []IsuConditionBulk
+	for _, cond := range req {
+		timestamp := time.Unix(cond.Timestamp, 0)
 
-    if !isValidConditionFormat(cond.Condition) {
-      return c.String(http.StatusBadRequest, "bad request body")
-    }
+		if !isValidConditionFormat(cond.Condition) {
+			return c.String(http.StatusBadRequest, "bad request body")
+		}
 
-    isuConditionBulk = append(isuConditionBulk, IsuConditionBulk{
-      JIAIsuUUID: jiaIsuUUID,
-      Timestamp: timestamp,
-      IsSitting: cond.IsSitting,
-      Condition: cond.Condition,
-      Message: cond.Message,
-    })
-  }
+		isuConditionBulk = append(isuConditionBulk, IsuConditionBulk{
+			JIAIsuUUID: jiaIsuUUID,
+			Timestamp:  timestamp,
+			IsSitting:  cond.IsSitting,
+			Condition:  cond.Condition,
+			Message:    cond.Message,
+		})
+	}
 
-  query := "INSERT INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`) VALUES "
-  for i, cond := range isuConditionBulk {
-    query += fmt.Sprintf("('%s', '%s', %t, '%s', '%s')", cond.JIAIsuUUID, cond.Timestamp.Format("2006-01-02 15:04:05"), cond.IsSitting, cond.Condition, cond.Message)
-    if i != len(isuConditionBulk) - 1 {
-      query += ","
-    }
-  }
+	query := "INSERT INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `condition_level`, `message`) VALUES "
+	for i, cond := range isuConditionBulk {
+		conditionLevel, err := calculateConditionLevel(cond.Condition)
+		if err != nil {
+			c.Logger().Error(err)
+			return c.NoContent(http.StatusInternalServerError)
+		}
+		query += fmt.Sprintf("('%s', '%s', %t, '%s', '%s', '%s')", cond.JIAIsuUUID, cond.Timestamp.Format("2006-01-02 15:04:05"), cond.IsSitting, cond.Condition, conditionLevel, cond.Message)
+		if i != len(isuConditionBulk)-1 {
+			query += ","
+		}
+	}
 
-  _, err = tx.Exec(query)
-  if err != nil {
-    c.Logger().Errorf("db error: %v", err)
-    return c.NoContent(http.StatusInternalServerError)
-  }
+	_, err = tx.Exec(query)
+	if err != nil {
+		c.Logger().Errorf("db error: %v", err)
+		return c.NoContent(http.StatusInternalServerError)
+	}
 
 	err = tx.Commit()
 	if err != nil {
