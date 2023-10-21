@@ -1239,32 +1239,6 @@ func postIsuCondition(c echo.Context) error {
 		return c.String(http.StatusNotFound, "not found: isu")
 	}
 
-	tx, err := db.Beginx()
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-	defer tx.Rollback()
-
-	//	for _, cond := range req {
-	//		timestamp := time.Unix(cond.Timestamp, 0)
-	//
-	//		if !isValidConditionFormat(cond.Condition) {
-	//			return c.String(http.StatusBadRequest, "bad request body")
-	//		}
-	//
-	//		_, err = tx.Exec(
-	//			"INSERT INTO `isu_condition`"+
-	//				"	(`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)"+
-	//				"	VALUES (?, ?, ?, ?, ?)",
-	//			jiaIsuUUID, timestamp, cond.IsSitting, cond.Condition, cond.Message)
-	//		if err != nil {
-	//			c.Logger().Errorf("db error: %v", err)
-	//			return c.NoContent(http.StatusInternalServerError)
-	//		}
-	//
-	//	}
-
 	var isuConditionBulk []IsuConditionBulk
 	for _, cond := range req {
 		timestamp := time.Unix(cond.Timestamp, 0)
@@ -1295,13 +1269,7 @@ func postIsuCondition(c echo.Context) error {
 		}
 	}
 
-	_, err = tx.Exec(query)
-	if err != nil {
-		c.Logger().Errorf("db error: %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}
-
-	err = tx.Commit()
+	_, err = db.Exec(query)
 	if err != nil {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
