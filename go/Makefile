@@ -5,7 +5,7 @@ BINARY_NAME=isucondition
 .PHONY: build
 build:
 	@echo "Building..."
-	@go build -o $(BINARY_NAME) -v
+	@go build -o $(BINARY_NAME) *.go
 
 .PHONY: restart
 restart:

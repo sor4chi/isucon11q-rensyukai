@@ -6,6 +6,7 @@ require (
 	github.com/dgrijalva/jwt-go v3.2.0+incompatible
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/gorilla/sessions v1.2.1
+	github.com/jellydator/ttlcache/v3 v3.1.0 // indirect
 	github.com/jmoiron/sqlx v1.3.4
 	github.com/kaz/pprotein v1.1.0
 	github.com/labstack/echo/v4 v4.7.2

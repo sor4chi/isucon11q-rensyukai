@@ -26,6 +26,7 @@ import (
 	"github.com/labstack/gommon/log"
 
 	"github.com/kaz/pprotein/integration/echov4"
+  "github.com/jellydator/ttlcache/v3"
 )
 
 const (
@@ -103,7 +104,6 @@ type MySQLConnectionEnv struct {
 type InitializeRequest struct {
 	JIAServiceURL string `json:"jia_service_url"`
 }
-
 
 type InitializeResponse struct {
 	Language string `json:"language"`
@@ -210,6 +210,9 @@ func init() {
 }
 
 func main() {
+  iconCache = ttlcache.New[string, []byte](
+    ttlcache.WithTTL[string, []byte](60 * time.Second),
+  )
 	e := echo.New()
 	e.Debug = true
 	e.Logger.SetLevel(log.DEBUG)
@@ -337,11 +340,10 @@ func postInitialize(c echo.Context) error {
 	}
 
 	go func() {
-                if _, err := http.Get("http://localhost:9000/api/group/collect"); err != nil {
-                        log.Printf("failed to communicate with pprotein: %v", err)
-                }
-        }()
-
+		if _, err := http.Get("http://localhost:9000/api/group/collect"); err != nil {
+			log.Printf("failed to communicate with pprotein: %v", err)
+		}
+	}()
 
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
@@ -697,6 +699,8 @@ func getIsuID(c echo.Context) error {
 	return c.JSON(http.StatusOK, res)
 }
 
+var iconCache *ttlcache.Cache[string, []byte]
+
 // GET /api/isu/:jia_isu_uuid/icon
 // ISUのアイコンを取得
 func getIsuIcon(c echo.Context) error {
@@ -712,6 +716,12 @@ func getIsuIcon(c echo.Context) error {
 
 	jiaIsuUUID := c.Param("jia_isu_uuid")
 
+  key := "jia_user_id:" + jiaUserID + ",jia_isu_uuid:" + jiaIsuUUID
+  if ok := iconCache.Has(key); ok {
+    icon := iconCache.Get(key).Value()
+    return c.Blob(http.StatusOK, "", icon)
+  }
+
 	var image []byte
 	err = db.Get(&image, "SELECT `image` FROM `isu` WHERE `jia_user_id` = ? AND `jia_isu_uuid` = ?",
 		jiaUserID, jiaIsuUUID)
@@ -723,6 +733,8 @@ func getIsuIcon(c echo.Context) error {
 		c.Logger().Errorf("db error: %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
+
+  iconCache.Set(key, image, time.Minute * 1)
 
 	return c.Blob(http.StatusOK, "", image)
 }
